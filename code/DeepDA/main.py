@@ -9,7 +9,6 @@ import numpy as np
 import random
 import time
 
-import scipy.stats
 import wandb
 
 
@@ -248,19 +247,6 @@ def get_torch_gpu_environment():
     else:
         env_info["nb_available_GPUs"] = 0
     return env_info
-
-
-def compute_mean_and_confidence_interval(x, confidence=0.95):
-    """
-    returns the mean and the confidence interval, which are two real numbers
-
-    x: iterable
-
-    high - mean_ == mean_ - low except some numerical errors in rare cases
-    """
-    mean_ = np.mean(x)
-    low, high = scipy.stats.t.interval(confidence, len(x) - 1, loc=mean_, scale=scipy.stats.sem(x))
-    return mean_, high - mean_
 
 
 
