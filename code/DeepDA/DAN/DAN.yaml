@@ -18,5 +18,5 @@ n_iter_per_epoch: 500
 n_epoch: 20
 
 # Others
-seed: 1
+seed: 46
 num_workers: 3
