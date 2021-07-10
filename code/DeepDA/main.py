@@ -7,6 +7,11 @@ import utils
 from utils import str2bool
 import numpy as np
 import random
+import time
+
+import scipy.stats
+import wandb
+
 
 def get_parser():
     """Get default arguments."""
@@ -17,6 +22,7 @@ def get_parser():
     )
     # general configuration
     parser.add("--config", is_config_file=True, help="config file path")
+    parser.add("--method_name", required=True, type=str)
     parser.add("--seed", type=int, default=0)
     parser.add_argument('--num_workers', type=int, default=0)
     
@@ -106,7 +112,7 @@ def test(model, target_test_loader, args):
     acc = 100. * correct / len_target_dataset
     return acc, test_loss.avg
 
-def train(source_loader, target_train_loader, target_test_loader, model, optimizer, lr_scheduler, args):
+def train(source_loader, target_train_loader, target_test_loader, model, optimizer, lr_scheduler, args, wandb):
     len_source_loader = len(source_loader)
     len_target_loader = len(target_train_loader)
     n_batch = min(len_source_loader, len_target_loader)
@@ -119,6 +125,7 @@ def train(source_loader, target_train_loader, target_test_loader, model, optimiz
     stop = 0
     log = []
     for e in range(1, args.n_epoch+1):
+        t0 = time.time()
         model.train()
         train_loss_clf = utils.AverageMeter()
         train_loss_transfer = utils.AverageMeter()
@@ -151,8 +158,12 @@ def train(source_loader, target_train_loader, target_test_loader, model, optimiz
             
         log.append([train_loss_clf.avg, train_loss_transfer.avg, train_loss_total.avg])
         
+        train_loss_clf_avg = train_loss_clf.avg
+        train_loss_transfer_avg = train_loss_transfer.avg
+        train_loss_total_avg = train_loss_total.avg
+
         info = 'Epoch: [{:2d}/{}], cls_loss: {:.4f}, transfer_loss: {:.4f}, total_Loss: {:.4f}'.format(
-                        e, args.n_epoch, train_loss_clf.avg, train_loss_transfer.avg, train_loss_total.avg)
+                        e, args.n_epoch, train_loss_clf_avg, train_loss_transfer_avg, train_loss_total_avg)
         # Test
         stop += 1
         test_acc, test_loss = test(model, target_test_loader, args)
@@ -161,16 +172,28 @@ def train(source_loader, target_train_loader, target_test_loader, model, optimiz
         np.savetxt('train_log.csv', np_log, delimiter=',', fmt='%.6f')
         if best_acc < test_acc:
             best_acc = test_acc
+            wandb.run.summary["best_acc"] = best_acc
             stop = 0
+        epoch_time = time.time() - t0
         if args.early_stop > 0 and stop >= args.early_stop:
             print(info)
+            wandb.log({"epoch": e, "cls_loss": train_loss_clf_avg, 
+                "transfer_loss": train_loss_transfer_avg, "total_loss": 
+                train_loss_total_avg, "test_loss": test_loss, "test_acc": test_acc, "epoch_time": epoch_time})
             break
         print(info)
+        wandb.log({"epoch": e, "cls_loss": train_loss_clf_avg, "transfer_loss": train_loss_transfer_avg, 
+            "total_loss": train_loss_total_avg, "test_loss": test_loss, "test_acc": test_acc, 
+            "epoch_time": epoch_time})
+    wandb.run.summary["best_acc"] = best_acc
     print('Transfer result: {:.4f}'.format(best_acc))
 
 def main():
     parser = get_parser()
     args = parser.parse_args()
+
+    t0_overall = time.time()
+
     setattr(args, "device", torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
     print(args)
     set_random_seed(args.seed)
@@ -187,8 +210,59 @@ def main():
         scheduler = get_scheduler(optimizer, args)
     else:
         scheduler = None
-    train(source_loader, target_train_loader, target_test_loader, model, optimizer, scheduler, args)
+
+    # wandb
+    project_name = "OmniPrint-transfer-{}-{}".format(args.src_domain, args.tgt_domain)
+    group_name = "{}".format(args.method_name)
+    wandb_dir = "wandb_logs"
+    if not os.path.exists(wandb_dir):
+        os.makedirs(wandb_dir)
+    wandb.init(config=args, project=project_name, group=group_name, dir=wandb_dir)
     
+    env_info = get_torch_gpu_environment()
+    for k, v in env_info.items():
+        wandb.run.summary[k] = v
+    wandb.run.summary["trainable_parameters_count"] = count_trainable_parameters(model)
+
+    train(source_loader, target_train_loader, target_test_loader, model, optimizer, scheduler, args, wandb)
+
+
+    t_overall = time.time() - t0_overall 
+    print("Done in {:.1f} s.".format(t_overall))
+    wandb.run.summary["overall_computation_time"] = t_overall
+    
+
+def count_trainable_parameters(model):
+    return sum([x.numel() for x in model.parameters() if x.requires_grad])
+
+
+def get_torch_gpu_environment():
+    env_info = dict()
+    env_info["PyTorch_version"] = torch.__version__
+
+    if torch.cuda.is_available():
+        env_info["cuda_version"] = torch.version.cuda
+        env_info["cuDNN_version"] = torch.backends.cudnn.version()
+        env_info["nb_available_GPUs"] = torch.cuda.device_count()
+        env_info["current_GPU_name"] = torch.cuda.get_device_name(torch.cuda.current_device())
+    else:
+        env_info["nb_available_GPUs"] = 0
+    return env_info
+
+
+def compute_mean_and_confidence_interval(x, confidence=0.95):
+    """
+    returns the mean and the confidence interval, which are two real numbers
+
+    x: iterable
+
+    high - mean_ == mean_ - low except some numerical errors in rare cases
+    """
+    mean_ = np.mean(x)
+    low, high = scipy.stats.t.interval(confidence, len(x) - 1, loc=mean_, scale=scipy.stats.sem(x))
+    return mean_, high - mean_
+
+
 
 if __name__ == "__main__":
     main()
