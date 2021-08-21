@@ -209,9 +209,9 @@ def main():
         scheduler = get_scheduler(optimizer, args)
     else:
         scheduler = None
-
+    
     # wandb
-    project_name = "OmniPrint-transfer-{}-{}".format(args.src_domain, args.tgt_domain)
+    project_name = "DA-{}-{}".format(args.src_domain, args.tgt_domain)
     group_name = "{}".format(args.method_name)
     wandb_dir = "wandb_logs"
     if not os.path.exists(wandb_dir):

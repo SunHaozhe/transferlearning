@@ -1,5 +1,57 @@
 from torchvision import datasets, transforms
 import torch
+import os
+import glob
+import pandas as pd
+from PIL import Image
+
+
+class IMetaDL_Dataset(torch.utils.data.Dataset):
+    """
+    Under root, there should be 
+        labels.csv
+        images/
+    """
+    def __init__(self, root, transform):
+        super().__init__()
+        self.root = root
+        self.transform = transform
+
+        labels_path = os.path.join(root, "labels.csv")
+        assert os.path.exists(labels_path)
+        df = pd.read_csv(labels_path)
+        df = df.rename({"newfilename": "FILE_NAME", "category": "CATEGORY"}, axis=1)
+        df = df.rename({"uniquefilename": "FILE_NAME", "category": "CATEGORY"}, axis=1)
+
+        df = df.loc[:, ["FILE_NAME", "CATEGORY"]]
+
+        self.items = []
+        raw_labels = dict()
+        label_cnt = 0
+        for index, row in df.iterrows():
+            img_path = os.path.join(root, "images", row["FILE_NAME"])
+            raw_label = row["CATEGORY"]
+            self.items.append([img_path, raw_label])
+            if raw_label not in raw_labels:
+                raw_labels[raw_label] = label_cnt
+                label_cnt += 1
+        for item in self.items:
+            item.append(raw_labels[item[1]])
+
+
+    def __getitem__(self, index):
+        img_path = self.items[index][0]
+        img = Image.open(img_path).convert("RGB")
+
+        target = self.items[index][2]
+
+        if self.transform is not None:
+            img = self.transform(img) 
+        
+        return img, target
+
+    def __len__(self):
+        return len(self.items)
 
 def load_data(data_folder, batch_size, train, num_workers=0, **kwargs):
     transform = {
@@ -14,7 +66,7 @@ def load_data(data_folder, batch_size, train, num_workers=0, **kwargs):
                 transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                   std=[0.229, 0.224, 0.225])])
     }
-    data = datasets.ImageFolder(root=data_folder, transform=transform['train' if train else 'test'])
+    data = IMetaDL_Dataset(root=data_folder, transform=transform['train' if train else 'test'])
     data_loader = get_data_loader(data, batch_size=batch_size, 
                                 shuffle=True if train else False, 
                                 num_workers=num_workers, **kwargs, drop_last=True if train else False)
@@ -65,3 +117,10 @@ class InfiniteDataLoader:
 
     def __len__(self):
         return 0 # Always return 0
+
+
+
+
+
+
+
