@@ -38,6 +38,9 @@ class IMetaDL_Dataset(torch.utils.data.Dataset):
         for item in self.items:
             item.append(raw_labels[item[1]])
 
+        # this is not well documented, but this property is present in ImageFolder
+        self.classes = sorted(list(raw_labels.keys()))
+
 
     def __getitem__(self, index):
         img_path = self.items[index][0]
